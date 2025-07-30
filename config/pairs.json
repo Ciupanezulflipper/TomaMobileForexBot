@@ -1,0 +1,24 @@
+{
+  "default_pairs": [
+    "EUR/USD",
+    "GBP/USD",
+    "USD/JPY",
+    "USD/CHF",
+    "AUD/USD",
+    "USD/CAD",
+    "NZD/USD",
+    "XAU/USD"
+  ],
+  "analysis_settings": {
+    "ema_fast": 12,
+    "ema_slow": 26,
+    "rsi_period": 14,
+    "bb_period": 20,
+    "bb_std_dev": 2
+  },
+  "api_settings": {
+    "timeout": 10,
+    "retry_attempts": 3,
+    "rate_limit_buffer": 1
+  }
+}

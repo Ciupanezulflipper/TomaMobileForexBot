@@ -1,0 +1,27 @@
+2025-07-29 09:47:30,980 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 2
+2025-07-29 09:47:30,980 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 3
+2025-07-29 09:47:30,980 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 4
+2025-07-29 09:47:30,980 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 5
+2025-07-29 09:47:30,980 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 6
+2025-07-29 09:47:30,980 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 7
+2025-07-29 09:47:30,981 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 11
+2025-07-29 09:47:30,981 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 16
+2025-07-29 09:47:30,981 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 21
+2025-07-29 09:47:30,981 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 22
+2025-07-29 09:47:30,981 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 27
+2025-07-29 09:47:30,981 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 28
+2025-07-29 09:47:30,981 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 2
+2025-07-29 09:47:30,981 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 3
+2025-07-29 09:47:30,982 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 4
+2025-07-29 09:47:30,982 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 5
+2025-07-29 09:47:30,982 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 6
+2025-07-29 09:47:30,982 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 7
+2025-07-29 09:47:30,982 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 11
+2025-07-29 09:47:30,982 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 16
+2025-07-29 09:47:30,982 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 21
+2025-07-29 09:47:30,982 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 22
+2025-07-29 09:47:30,982 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 27
+2025-07-29 09:47:30,982 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 28
+2025-07-29 09:47:30,983 [WARNING] modules.data_fetcher: ⚠️ Missing API keys: TWELVE_DATA_API_KEY, ALPHA_VANTAGE_API_KEY, FINNHUB_API_KEY, EXCHANGERATE_API_KEY
+2025-07-29 09:52:45,419 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 1
+2025-07-29 09:52:45,420 [WARNING] dotenv.main: python-dotenv could not parse statement starting at line 1
