@@ -1,2 +1,8 @@
-python-telegram-bot==21.4
+python-telegram-bot==20.3
 requests
+pandas
+numpy
+finnhub-python
+tradingview_ta
+oandapyV20
+openai
