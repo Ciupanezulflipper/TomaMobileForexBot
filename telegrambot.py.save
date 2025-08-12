@@ -1,0 +1,39 @@
+telegrambot.py — Telegram interface for MobileForexBot
+
+import logging from telegram import Update, Bot from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes from main import MobileForexBot  # make sure main.py defines this class import requests import os
+
+-------------------- CONFIG --------------------
+
+TELEGRAM_TOKEN = "7991280737:AAGZWG2syFDbG5xhsVoQCNillPLZ8RlcAmk" SYMBOLS = ["EUR/USD", "XAU/USD"] API_KEY = "06fe46e64e1b4408a0c47efba324d1d2"
+
+-------------------- SETUP ---------------------
+
+bot_core = MobileForexBot() logging.basicConfig(level=logging.INFO)
+
+-------------------- FETCH DATA ----------------
+
+def fetch_twelvedata(symbol): base = "https://api.twelvedata.com/time_series" params = { "symbol": symbol, "interval": "1h", "outputsize": 100, "apikey": API_KEY } try: r = requests.get(base, params=params) r.raise_for_status() return r.json() except Exception as e: print(f"❌ Error fetching {symbol}: {e}") return None
+
+-------------------- COMMAND -------------------
+
+async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE): chat_id = update.effective_chat.id message = "📊 Market Analysis:\n"
+
+for symbol in SYMBOLS:
+    raw = fetch_twelvedata(symbol.replace("/", ""))
+    if raw and "values" in raw:
+        df = bot_core.process_api_data(raw)
+        result = bot_core.analyze_pair(df)
+        msg = f"\n🔍 {symbol}\nPrice: {result['price']:.5f}\nSignal: {result['signal']} ({result['confidence']:.2f})\nRSI: {result['RSI']:.2f}\nMFI: {result['MFI']:.2f}\nRegime: {result['regime']}"
+    else:
+        msg = f"\n⚠️ Error fetching {symbol}"
+    message += msg
+
+await context.bot.send_message(chat_id=chat_id, text=message)
+
+-------------------- MAIN ----------------------
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE): await update.message.reply_text("🤖 Bot is active! Use /analyze to get signals.")
+
+if name == 'main': app = ApplicationBuilder().token(TELEGRAM_TOKEN).build() app.add_handler(CommandHandler("start", start)) app.add_handler(CommandHandler("analyze", analyze)) print("✅ Bot is running. Waiting for /analyze commands...") app.run_polling()
+
+

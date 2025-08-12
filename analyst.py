@@ -1,0 +1,412 @@
+from __future__ import annotations
+import logging
+import os
+import time
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Tuple
+
+import pandas as pd
+from dotenv import load_dotenv
+
+# Optional providers (we still work if some are missing)
+try:
+    import finnhub
+except Exception:
+    finnhub = None
+
+try:
+    from twelvedata import TDClient
+except Exception:
+    TDClient = None
+
+# Alpha Vantage intraday is premium for FX; we’ll only use FREE DAILY as a last fallback
+try:
+    from alpha_vantage.foreignexchange import ForeignExchange
+except Exception:
+    ForeignExchange = None
+
+# Free fallback: Yahoo Finance (hourly for most tickers)
+try:
+    import yfinance as yf
+except Exception:
+    yf = None
+
+# ------------------------------------------------------------
+
+load_dotenv()
+
+log = logging.getLogger("analyst")
+log.setLevel(logging.WARNING)
+logging.basicConfig(filename="analyst.log", level=logging.WARNING)
+
+INSTRUMENTS: List[str] = [
+    "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "NZDUSD", "USDCAD", "EURGBP",
+    "XAUUSD", "SILVER", "WTI", "BRENT", "NGAS",
+]
+
+# Finnhub OANDA mapping (used as "OANDA:{API_SYMBOLS[pair]}")
+API_SYMBOLS: Dict[str, str] = {
+    "EURUSD": "EUR_USD",
+    "GBPUSD": "GBP_USD",
+    "USDJPY": "USD_JPY",
+    "USDCHF": "USD_CHF",
+    "AUDUSD": "AUD_USD",
+    "NZDUSD": "NZD_USD",
+    "USDCAD": "USD_CAD",
+    "EURGBP": "EUR_GBP",
+    "XAUUSD": "XAU_USD",
+    "SILVER": "XAG_USD",
+    "WTI": "WTICO_USD",
+    "BRENT": "BCO_USD",
+    "NGAS": "NAT_GAS_USD",
+}
+
+# Human-ish base names (for TwelveData / AlphaVantage)
+BASE_SYMBOLS: Dict[str, str] = {
+    "EURUSD": "EURUSD",
+    "GBPUSD": "GBPUSD",
+    "USDJPY": "USDJPY",
+    "USDCHF": "USDCHF",
+    "AUDUSD": "AUDUSD",
+    "NZDUSD": "NZDUSD",
+    "USDCAD": "USDCAD",
+    "EURGBP": "EURGBP",
+    "XAUUSD": "XAUUSD",
+    "SILVER": "XAGUSD",
+    "WTI": "CL",
+    "BRENT": "BZ",
+    "NGAS": "NG",
+}
+
+# Yahoo Finance symbols
+YF_SYMBOLS: Dict[str, str] = {
+    "EURUSD": "EURUSD=X",
+    "GBPUSD": "GBPUSD=X",
+    "USDJPY": "JPY=X",      # JPY per USD
+    "USDCHF": "CHF=X",
+    "AUDUSD": "AUDUSD=X",
+    "NZDUSD": "NZDUSD=X",
+    "USDCAD": "CAD=X",
+    "EURGBP": "EURGBP=X",
+    "XAUUSD": "XAUUSD=X",
+    "SILVER": "XAGUSD=X",   # alt: SI=F (futures)
+    "WTI": "CL=F",
+    "BRENT": "BZ=F",
+    "NGAS": "NG=F",
+}
+
+DEFAULT_LEVELS = {"support": [], "resistance": []}
+
+# Runtime state
+CACHE: Dict[str, Dict] = {}
+CACHE_TTL = 120  # seconds
+FAILURE_TRACKER: Dict[str, Dict] = {}
+BREAKER_TTL = 600  # seconds
+
+FINNHUB_KEY = os.getenv("FINNHUB_KEY", "")
+TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
+ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")
+
+CLIENT_FINNHUB = finnhub.Client(api_key=FINNHUB_KEY) if finnhub and FINNHUB_KEY else None
+CLIENT_TWELVE = TDClient(apikey=TWELVE_DATA_API_KEY) if TDClient and TWELVE_DATA_API_KEY else None
+CLIENT_ALPHA_FX = ForeignExchange(key=ALPHA_VANTAGE_API_KEY, output_format="pandas") if ForeignExchange and ALPHA_VANTAGE_API_KEY else None
+
+# ------------------------------------------------------------
+
+def _fallback(pair: str, msg: str) -> Dict:
+    return {
+        "pair": pair.upper(),
+        "price": 0.0,
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "score": 0.50,
+        "tech": 0,
+        "macro": 0,
+        "bias": "neutral",
+        "levels": DEFAULT_LEVELS.copy(),
+        "reason": msg or "No data; neutral fallback.",
+    }
+
+def _compute_levels(df: pd.DataFrame) -> Dict[str, List[float]]:
+    try:
+        last_day = df.tail(24)  # works for hourly; for daily still produces pivots
+        h = float(last_day["High"].max())
+        l = float(last_day["Low"].min())
+        c = float(last_day["Close"].iloc[-1])
+        pivot = (h + l + c) / 3.0
+        sup1 = 2 * pivot - h
+        sup2 = pivot - (h - l)
+        sup3 = l - 2 * (h - pivot)
+        res1 = 2 * pivot - l
+        res2 = pivot + (h - l)
+        res3 = h + 2 * (pivot - l)
+        supports = [round(x, 5) for x in (sup1, sup2, sup3) if x > 0]
+        resistances = [round(x, 5) for x in (res1, res2, res3)]
+        return {"support": sorted(supports)[:3], "resistance": sorted(resistances)[:3]}
+    except Exception as e:
+        log.warning(f"Levels error: {e}")
+        return DEFAULT_LEVELS.copy()
+
+def _compute_tech(df: pd.DataFrame) -> Tuple[int, str]:
+    try:
+        closes = df["Close"]
+        ema9 = closes.ewm(span=9, adjust=False).mean()
+        ema21 = closes.ewm(span=21, adjust=False).mean()
+        ema_score = 3 if ema9.iloc[-1] > ema21.iloc[-1] else 0
+        ema_reason = "EMA9 > EMA21" if ema_score > 0 else ""
+
+        delta = closes.diff()
+        gain = delta.where(delta > 0, 0).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rs = gain / (loss.replace(0, pd.NA))
+        rsi = 100 - 100 / (1 + rs)
+        rsi_val = float(rsi.fillna(method="ffill").iloc[-1])
+        rsi_score = 2 if rsi_val > 60 else (-2 if rsi_val < 40 else 0)
+        rsi_reason = "RSI >60" if rsi_score > 0 else ("RSI <40" if rsi_score < 0 else "")
+
+        ema12 = closes.ewm(span=12, adjust=False).mean()
+        ema26 = closes.ewm(span=26, adjust=False).mean()
+        macd = ema12 - ema26
+        signal = macd.ewm(span=9, adjust=False).mean()
+        macd_score = 2 if macd.iloc[-1] > signal.iloc[-1] else 0
+        macd_reason = "MACD > signal" if macd_score > 0 else ""
+
+        last_open = float(df["Open"].iloc[-1])
+        last_close = float(closes.iloc[-1])
+        last_high = float(df["High"].iloc[-1])
+        last_low = float(df["Low"].iloc[-1])
+        rng = max(1e-9, last_high - last_low)
+        body = abs(last_close - last_open)
+        candle_score = 2 if (body / rng > 0.5 and last_close > last_open) else 0
+        candle_reason = "strong bull candle" if candle_score > 0 else ""
+
+        up_count = int((closes.diff().tail(5) > 0).sum())
+        trend_score = 2 if up_count > 3 else 0
+        trend_reason = "uptrend persistence" if trend_score > 0 else ""
+
+        returns = closes.pct_change().tail(24)
+        vol_score = 2 if returns.std() < abs(returns.mean()) else 0
+        vol_reason = "low vol regime" if vol_score > 0 else ""
+
+        max_close = float(closes.tail(24).max())
+        min_close = float(closes.tail(24).min())
+        breakout_score = 3 if last_close > max_close else (2 if last_close > (max_close + min_close) / 2 else 0)
+        breakout_reason = "breakout" if breakout_score == 3 else ("pullback" if breakout_score == 2 else "")
+
+        total = ema_score + rsi_score + macd_score + candle_score + trend_score + vol_score + breakout_score
+        reasons = [r for r in [ema_reason, rsi_reason, macd_reason, candle_reason, trend_reason, vol_reason, breakout_reason] if r]
+        return max(0, min(16, total)), "; ".join(reasons)
+    except Exception as e:
+        log.warning(f"Tech score error: {e}")
+        return 0, ""
+
+def _compute_macro(df_dict: Dict[str, pd.DataFrame]) -> Tuple[int, str]:
+    try:
+        eurusd = df_dict.get("EURUSD")
+        usdjpy = df_dict.get("USDJPY")
+        gbpusd = df_dict.get("GBPUSD")
+        usdcad = df_dict.get("USDCAD")
+        usdchf = df_dict.get("USDCHF")
+        if all(x is not None for x in [eurusd, usdjpy, gbpusd, usdcad, usdchf]):
+            pct_eur = float(eurusd["Close"].pct_change().iloc[-1]) * -0.576
+            pct_jpy = float(usdjpy["Close"].pct_change().iloc[-1]) * 0.136
+            pct_gbp = float(gbpusd["Close"].pct_change().iloc[-1]) * -0.119
+            pct_cad = float(usdcad["Close"].pct_change().iloc[-1]) * 0.091
+            pct_chf = float(usdchf["Close"].pct_change().iloc[-1]) * 0.036
+            dxy_pct = (pct_eur + pct_jpy + pct_gbp + pct_cad + pct_chf) * 100.0
+            dxy_score = -2 if dxy_pct > 0.5 else (2 if dxy_pct < -0.5 else 0)
+            dxy_reason = "USD weak" if dxy_score > 0 else ("USD strong" if dxy_score < 0 else "")
+
+            xau = df_dict.get("XAUUSD")
+            if xau is not None:
+                xau_pct = float(xau["Close"].pct_change().iloc[-1]) * 100.0
+                risk_score = 2 if xau_pct < -0.5 else (-2 if xau_pct > 0.5 else 0)
+                risk_reason = "risk-on (gold down)" if risk_score > 0 else ("risk-off (gold up)" if risk_score < 0 else "")
+            else:
+                risk_score, risk_reason = 0, ""
+
+            total = dxy_score + risk_score
+            reasons = [r for r in [dxy_reason, risk_reason] if r]
+            return max(0, min(6, total)), "; ".join(reasons)
+        return 0, ""
+    except Exception as e:
+        log.warning(f"Macro score error: {e}")
+        return 0, ""
+
+# ------------------------------------------------------------
+# Unified fetcher with multi-source fallback
+# Order: Finnhub → TwelveData → Yahoo Finance → AlphaVantage DAILY
+# ------------------------------------------------------------
+def _try_fetch_candles(symbol: str) -> Tuple[pd.DataFrame, str]:
+    # Finnhub (hourly)
+    try:
+        if CLIENT_FINNHUB and symbol in API_SYMBOLS:
+            now = int(time.time())
+            frm = now - 172800  # 48h
+            data = CLIENT_FINNHUB.forex_candles(f"OANDA:{API_SYMBOLS[symbol]}", "60", frm, now)
+            if data and data.get("s") == "ok" and data.get("c"):
+                df = pd.DataFrame(
+                    {"Open": data["o"], "High": data["h"], "Low": data["l"], "Close": data["c"]},
+                    index=pd.to_datetime(data["t"], unit="s", utc=True),
+                ).sort_index()
+                if len(df) >= 2 and (datetime.now(timezone.utc) - df.index[-1]) <= timedelta(hours=48):
+                    return df, "finnhub"
+    except Exception as e:
+        log.info(f"Finnhub failed: {e}")
+
+    # TwelveData (hourly)
+    try:
+        if CLIENT_TWELVE and symbol in BASE_SYMBOLS:
+            base = BASE_SYMBOLS[symbol]
+            if symbol == "USDJPY":
+                td_sym = "USD/JPY"
+            elif symbol == "USDCHF":
+                td_sym = "USD/CHF"
+            elif symbol == "USDCAD":
+                td_sym = "USD/CAD"
+            elif symbol == "EURGBP":
+                td_sym = "EUR/GBP"
+            elif len(base) == 6 and base.endswith("USD"):
+                td_sym = f"{base[:3]}/USD"
+            else:
+                td_sym = base
+
+            ts = CLIENT_TWELVE.time_series(symbol=td_sym, interval="1h", outputsize=72)
+            df = ts.as_pandas()[["open", "high", "low", "close"]].copy()
+            df.columns = ["Open", "High", "Low", "Close"]
+            df.index = pd.to_datetime(df.index, utc=True)
+            df = df.sort_index()
+            if len(df) >= 2 and (datetime.now(timezone.utc) - df.index[-1]) <= timedelta(hours=72):
+                return df, "twelvedata"
+    except Exception as e:
+        log.info(f"TwelveData failed: {e}")
+
+    # Yahoo Finance (hourly, 5d) — no API key needed
+    try:
+        if yf and symbol in YF_SYMBOLS:
+            yf_sym = YF_SYMBOLS[symbol]
+            df = yf.download(tickers=yf_sym, interval="60m", period="5d", auto_adjust=False, progress=False, threads=False)
+            if not df.empty:
+                df = df[["Open", "High", "Low", "Close"]].copy()
+                if df.index.tz is not None:
+                    df.index = df.index.tz_convert(timezone.utc)
+                df = df.sort_index()
+                if len(df) >= 2 and (datetime.now(timezone.utc) - df.index[-1]) <= timedelta(hours=72):
+                    return df, "yahoo"
+    except Exception as e:
+        log.info(f"Yahoo failed: {e}")
+
+    # Alpha Vantage DAILY (free) — coarse but better than nothing
+    try:
+        if CLIENT_ALPHA_FX and symbol in BASE_SYMBOLS:
+            from_sym, to_sym = symbol[:3], symbol[3:]
+            data, _ = CLIENT_ALPHA_FX.get_currency_exchange_daily(from_symbol=from_sym, to_symbol=to_sym, outputsize="compact")
+            df = data[["1. open", "2. high", "3. low", "4. close"]].copy()
+            df.columns = ["Open", "High", "Low", "Close"]
+            df.index = pd.to_datetime(df.index, utc=True)
+            df = df.sort_index()
+            if len(df) >= 2:
+                return df, "alpha_vantage_daily"
+    except Exception as e:
+        log.info(f"Alpha Vantage daily failed: {e}")
+
+    raise ValueError("All sources failed")
+
+# ------------------------------------------------------------
+
+def analyze_24h(pair: str) -> Dict:
+    key = pair.upper().replace("/", "")
+    if key not in BASE_SYMBOLS:
+        return _fallback(key, f"Unknown pair '{pair}'")
+
+    now = time.time()
+    if key in FAILURE_TRACKER and now < FAILURE_TRACKER[key].get("break_until", 0):
+        return _fallback(key, "Circuit breaker active; neutral fallback")
+
+    if key in CACHE and now - CACHE[key]["ts"] < CACHE_TTL:
+        return CACHE[key]["analysis"]
+
+    try:
+        df, src = _try_fetch_candles(key)
+        closes = df["Close"].dropna()
+
+        # Determine bar width (hourly vs daily) for 4h computation
+        if len(df.index) >= 2:
+            bar_hours = (df.index[-1] - df.index[-2]).total_seconds() / 3600.0
+        else:
+            bar_hours = 24.0
+
+        pct_24h = ((closes.iloc[-1] - closes.iloc[0]) / closes.iloc[0]) * 100 if len(closes) > 1 else 0.0
+        if bar_hours <= 1.5 and len(closes) > 4:
+            pct_4h = ((closes.iloc[-1] - closes.iloc[-4]) / closes.iloc[-4]) * 100
+        else:
+            pct_4h = pct_24h / 6.0  # coarse stand-in when we only have daily bars
+
+        base = max(0.0, min(1.0, (pct_24h * 0.5 + pct_4h * 0.5 + 5.0) / 10.0))
+
+        tech, tech_reason = _compute_tech(df)
+
+        # Macro: gather a few USD pairs
+        usd_pairs = ["EURUSD", "GBPUSD", "USDJPY", "USDCAD", "USDCHF", "XAUUSD"]
+        df_dict = {key: df}
+        for p in usd_pairs:
+            if p == key:
+                continue
+            try:
+                dfx, _ = _try_fetch_candles(p)
+                df_dict[p] = dfx
+            except Exception:
+                pass
+
+        macro, macro_reason = _compute_macro(df_dict)
+
+        score = 0.2 * base + 0.7 * (tech / 16.0) + 0.1 * (macro / 6.0)
+        score = max(0.0, min(1.0, score))
+
+        bias = "bullish" if score > 0.55 else ("bearish" if score < 0.45 else "neutral")
+        levels = _compute_levels(df)
+        price = float(closes.iloc[-1])
+        ts = df.index[-1].strftime("%Y-%m-%d %H:%M UTC")
+        reason = f"{src}: 24h {pct_24h:.2f}% + 4h {pct_4h:.2f}%, {tech_reason}; {macro_reason}".strip(", ;")
+
+        analysis = {
+            "pair": key,
+            "price": price,
+            "ts": ts,
+            "score": score,
+            "tech": tech,
+            "macro": macro,
+            "bias": bias,
+            "levels": levels,
+            "reason": reason,
+        }
+        CACHE[key] = {"analysis": analysis, "ts": now}
+        if key in FAILURE_TRACKER:
+            del FAILURE_TRACKER[key]
+        return analysis
+
+    except Exception as e:
+        log.warning(f"Error for {key}: {e}")
+        ft = FAILURE_TRACKER.setdefault(key, {"count": 0, "break_until": 0})
+        ft["count"] += 1
+        if ft["count"] >= 3:
+            ft["break_until"] = now + BREAKER_TTL
+        return _fallback(key, f"Failed ({str(e)}); neutral fallback")
+
+def make_signal(pair: str) -> Dict:
+    a = analyze_24h(pair)
+    s = a.get("score", 0.50)
+    if s >= 0.55:
+        action, conf = "BUY", ("high" if s >= 0.70 else "medium")
+    elif s <= 0.45:
+        action, conf = "SELL", ("high" if s <= 0.30 else "medium")
+    else:
+        action, conf = "HOLD", "low"
+    a["action"] = action
+    a["confidence"] = conf
+    return a
+
+# --------------- CLI smoke ---------------
+if __name__ == "__main__":
+    for p in INSTRUMENTS:
+        s = make_signal(p)
+        print(f"[OK] {p} {s['score']:.2f} {s['bias']} {s['action']} ({s['reason']})")

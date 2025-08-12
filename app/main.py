@@ -1,4 +1,56 @@
+import osimport os
+os.environ["YFINANCE_USE_CURL_CFFI"] = "false"
+
 import yfinance as yf
+import pandas as pd
+import ta
+import time
+
+def fetch_data(symbol="EURUSD=X", interval="1h", period="2d"):
+    try:
+        df = yf.download(tickers=symbol, interval=interval, period=period)
+        df.dropna(inplace=True)
+        return df
+    except Exception as e:
+        print(f"❌ Data fetch failed: {e}")
+        return None
+
+def analyze(df):
+    try:
+        df["EMA9"] = ta.trend.EMAIndicator(close=df["Close"], window=9).ema_indicator()
+        df["EMA21"] = ta.trend.EMAIndicator(close=df["Close"], window=21).ema_indicator()
+        df["RSI"] = ta.momentum.RSIIndicator(close=df["Close"], window=14).rsi()
+
+        last = df.iloc[-1]
+        if last["EMA9"] > last["EMA21"] and last["RSI"] < 70:
+            return "BUY", last
+        elif last["EMA9"] < last["EMA21"] and last["RSI"] > 30:
+            return "SELL", last
+        else:
+            return "WAIT", last
+    except Exception as e:
+        print(f"❌ Analysis failed: {e}")
+        return "ERROR", None
+
+def run_bot(symbol="EURUSD=X"):
+    while True:
+        df = fetch_data(symbol)
+        if df is None:
+            continue
+
+        verdict, latest = analyze(df)
+        if verdict == "ERROR":
+            continue
+
+        print(f"\n💡 Verdict: {verdict}")
+        print(f"💲 Close: {latest['Close']:.4f}")
+        print(f"📈 EMA9: {latest['EMA9']:.4f}")
+
+        time.sleep(60)  # Adjust interval as needed
+
+if __name__ == "__main__":
+    run_bot()
+os.environ["YFINANCE_USE_CURL_CFFI"] = "false"import yfinance as yf
 import pandas as pd
 from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator
