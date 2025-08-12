@@ -6,3 +6,8 @@ backups/
 *.tgz
 .env.*
 .DS_Store
+
+# Ignore logs and accidental saves
+*.log
+*.save
+bot.log.*
