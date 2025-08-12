@@ -7,6 +7,11 @@ from typing import Dict, List, Tuple
 
 import pandas as pd
 from dotenv import load_dotenv
+# --- UTC helper to avoid deprecated utcnow_naive() ---
+def utcnow_naive():
+    # timezone-aware now in UTC, then drop tzinfo so we can compare to naive indexes
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 # Optional providers (we still work if some are missing)
 try:

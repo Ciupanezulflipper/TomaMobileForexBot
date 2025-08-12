@@ -1,5 +1,8 @@
 .env
+*.pid
 *.log
 __pycache__/
 backups/
 *.tgz
+.env.*
+.DS_Store
