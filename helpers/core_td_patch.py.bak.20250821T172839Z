@@ -1,0 +1,88 @@
+# helpers/core_td_patch.py
+# Patch layer to fetch candles from TwelveData and return exactly what core expects:
+# (df, src, tf_label)
+
+from __future__ import annotations
+
+import os
+import requests
+import pandas as pd
+
+
+def _td_api_key() -> str:
+    return os.getenv("TWELVE_DATA_API_KEY") or os.getenv("TWELVEDATA_API_KEY") or ""
+
+
+def _normalize_symbol(sym: str) -> str:
+    s = sym.strip().upper()
+    if "/" not in s and len(s) >= 6:
+        s = f"{s[:3]}/{s[3:6]}"
+    return s
+
+
+def _interval(tf_minutes: int) -> str:
+    if tf_minutes <= 1: return "1min"
+    if tf_minutes == 5: return "5min"
+    if tf_minutes == 15: return "15min"
+    if tf_minutes == 30: return "30min"
+    if tf_minutes == 60: return "1h"
+    if tf_minutes == 240: return "4h"
+    if tf_minutes >= 1440: return "1day"
+    return f"{tf_minutes}min"
+
+
+def _fetch_twelvedata_candles(symbol: str, tf_minutes: int, limit: int = 400) -> pd.DataFrame:
+    api_key = _td_api_key()
+    if not api_key:
+        raise RuntimeError("TwelveData API key missing in .env (TWELVE_DATA_API_KEY).")
+
+    sym = _normalize_symbol(symbol)
+    interval = _interval(tf_minutes)
+
+    url = "https://api.twelvedata.com/time_series"
+    params = {"symbol": sym, "interval": interval, "outputsize": str(limit), "format": "JSON", "apikey": api_key}
+
+    r = requests.get(url, params=params, timeout=15)
+    r.raise_for_status()
+    data = r.json()
+
+    if isinstance(data, dict) and data.get("status") == "error":
+        raise RuntimeError(f"TwelveData error: {data.get('message') or 'Unknown error'}")
+
+    values = data.get("values") if isinstance(data, dict) else None
+    if not values:
+        return pd.DataFrame(columns=["open", "high", "low", "close"])
+
+    recs = []
+    for v in values:
+        try:
+            recs.append({
+                "datetime": v["datetime"],
+                "open": float(v["open"]),
+                "high": float(v["high"]),
+                "low": float(v["low"]),
+                "close": float(v["close"]),
+            })
+        except Exception:
+            continue
+
+    if not recs:
+        return pd.DataFrame(columns=["open", "high", "low", "close"])
+
+    df = pd.DataFrame.from_records(recs)
+    df["datetime"] = pd.to_datetime(df["datetime"], utc=True, errors="coerce")
+    df = df.dropna(subset=["datetime"]).sort_values("datetime").set_index("datetime")
+    return df
+
+
+def get_candles(symbol: str, tf_minutes: int, limit: int = 400):
+    """Return (df, src, tf_label) exactly as core.analyze_once expects."""
+    df = _fetch_twelvedata_candles(symbol, tf_minutes, limit=limit)
+
+    for col in ("open", "high", "low", "close"):
+        if col not in df.columns:
+            df[col] = pd.Series(dtype="float64")
+
+    src = "TD"
+    tf_lbl = "4h" if tf_minutes == 240 else (f"{tf_minutes}m" if tf_minutes < 60 else "60m")
+    return df, src, tf_lbl

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Purpose: load .env, normalize alt variable names into the names used by our code,
+# then export them for the current shell.
+set -euo pipefail
+
+if [ -f ".env" ]; then
+  set -a
+  . ./.env
+  set +a
+else
+  echo "WARNING: .env not found in $(pwd)"
+fi
+
+# Normalize FINNHUB_* → FINNHUB_KEY
+if [ -n "${FINNHUB_KEY-}" ]; then
+  export FINNHUB_KEY="$FINNHUB_KEY"
+elif [ -n "${FINNHUB_API_KEY-}" ]; then
+  export FINNHUB_KEY="$FINNHUB_API_KEY"
+fi
+
+# Normalize ALPHA → ALPHA_VANTAGE_API_KEY (code uses this exact name)
+if [ -n "${ALPHA_VANTAGE_API_KEY-}" ]; then
+  export ALPHA_VANTAGE_API_KEY="$ALPHA_VANTAGE_API_KEY"
+elif [ -n "${ALPHAVANTAGE_API_KEY-}" ]; then
+  export ALPHA_VANTAGE_API_KEY="$ALPHAVANTAGE_API_KEY"
+fi
+
+# Normalize TWELVE → TWELVE_DATA_API_KEY
+if [ -n "${TWELVE_DATA_API_KEY-}" ]; then
+  export TWELVE_DATA_API_KEY="$TWELVE_DATA_API_KEY"
+elif [ -n "${TWELVEDATA_API_KEY-}" ]; then
+  export TWELVE_DATA_API_KEY="$TWELVEDATA_API_KEY"
+fi
+
+# Telegram token (our code expects TELEGRAM_BOT_TOKEN)
+if [ -n "${TELEGRAM_BOT_TOKEN-}" ]; then
+  export TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
+elif [ -n "${BOT_TOKEN-}" ]; then
+  export TELEGRAM_BOT_TOKEN="$BOT_TOKEN"
+fi
+
+echo "[env_sync] Loaded keys:"
+for k in TELEGRAM_BOT_TOKEN FINNHUB_KEY TWELVE_DATA_API_KEY ALPHA_VANTAGE_API_KEY; do
+  if [ -n "${!k-}" ]; then echo " - $k: SET"; else echo " - $k: MISSING"; fi
+done

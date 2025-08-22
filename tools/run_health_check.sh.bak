@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 1) Move to project root (parent of /tools)
+cd "$(dirname "$0")/.."
+
+# 2) Load .env if present (safe export)
+if [ -f ./.env ]; then
+  set -a; . ./.env; set +a
+fi
+
+# 3) Optionally sync from saved secrets
+[ -f ./env.secrets ] && ./write_env_from_file.sh env.secrets >/dev/null 2>&1 || true
+
+# 4) Ensure Python can see the project root
+PYTHONPATH="$(pwd):${PYTHONPATH:-}" python3 tools/health_check.py

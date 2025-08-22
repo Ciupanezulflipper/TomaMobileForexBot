@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+# run_td.py — run core.analyze_once using TwelveData candles via our patch
+
+from __future__ import annotations
+
+import os
+import sys
+import argparse
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+for p in (ROOT, ROOT / "gpt5_baseline", ROOT / "helpers"):
+    if str(p) not in sys.path:
+        sys.path.insert(0, str(p))
+
+from dotenv import load_dotenv
+for p in (ROOT / ".env", ROOT / "gpt5_baseline" / ".env"):
+    if p.exists():
+        load_dotenv(dotenv_path=str(p), override=False)
+
+from helpers import core_td_patch as td_patch  # our get_candles()
+
+def main():
+    ap = argparse.ArgumentParser(description="Run analysis with TwelveData candles")
+    ap.add_argument("symbol", help='e.g. "EUR/USD" or "USDJPY"')
+    ap.add_argument("tf", type=int, help="timeframe minutes (e.g. 5, 60, 240)")
+    args = ap.parse_args()
+
+    import core  # import after sys.path & env
+    core.get_candles = td_patch.get_candles  # monkey-patch
+
+    res = core.analyze_once(args.symbol, args.tf)
+    from pprint import pprint
+    pprint(res)
+
+if __name__ == "__main__":
+    main()

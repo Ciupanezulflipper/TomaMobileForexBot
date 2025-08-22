@@ -1,4 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
+bash tools/env_sync.sh
 set -euo pipefail
 
 WORKDIR="$HOME/TomaMobileForexBot"
