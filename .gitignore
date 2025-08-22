@@ -1,20 +1,44 @@
-# Ignore environment files
+# ==========================
+# Environment & Secrets
+# ==========================
 .env
+.env.*
 *.env
+*.env.*
+.env_backup
+*.backup
 
-# Ignore Python cache
+# ==========================
+# Python
+# ==========================
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 
-# Ignore local test/output files
-out.json
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# ==========================
+# Logs & Local Artifacts
+# ==========================
 *.log
+*.out
+*.save
+*.bak
+
+# ==========================
+# OS / Editor Files
+# ==========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# ==========================
+# Temporary files
+# ==========================
 *.tmp
-.env
-*.env
-__pycache__/
-*.pyc
-out.json
-*.log
-*.tmp
-.env.backup
+*.temp
