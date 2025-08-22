@@ -17,3 +17,4 @@ __pycache__/
 out.json
 *.log
 *.tmp
+.env.backup
