@@ -1,0 +1,1 @@
+{"action":"WAIT","score16":0,"score6":0,"why_short":[],"risk_notes":["Exporter error: EODHD_URL_TEMPLATE missing or invalid"],"conflicts":[],"confidence_1to5":1,"telegram_commentary":"Exporter failed to fetch/compute; check API key or rate limits."}
